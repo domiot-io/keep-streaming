@@ -1,0 +1,47 @@
+{
+  "name": "keep-streaming",
+  "version": "1.0.0",
+  "description": "Continuous reading and writing across all file types, with customizable retry mechanisms. Keep streaming!",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "index.js",
+    "File.js", 
+    "ReadOperation.js",
+    "WriteOperation.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "stream",
+    "streaming",
+    "retry", 
+    "driver",
+    "fifo",
+    "io",
+    "device",
+    "file",
+    "concurrent",
+    "mutex",
+    "nodejs"
+  ],
+  "author": "Alvaro Fernandez ( domiot.org )",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/domiot-io/keep-streaming.git"
+  },
+  "bugs": {
+    "url": "https://github.com/domiot-io/keep-streaming/issues"
+  },
+  "homepage": "https://github.com/domiot-io/keep-streaming#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "another-mutex": "^0.0.0"
+  }
+}

@@ -1,6 +1,6 @@
 # keep-streaming!
 
-A Node.js library for continuous reading and writing across all file types, with customizable retry mechanisms and safe concurrent writes to keep streaming!
+A Node.js library for continuous reading and writing across all file types (device files, FIFOs, ...), with customizable retry mechanisms and safe concurrent writes to keep streaming!
 
 Designed for device files (/dev/*) and FIFOs but supports reading from and writing to any file type.
 

@@ -69,6 +69,7 @@ class WriteOperation {
    */
   write() {
     this._execute();
+    return this;
   }
 
   /**

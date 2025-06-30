@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import { execSync } from 'child_process';
 import assert from 'node:assert';
 import fs from 'fs';
 import path from 'path';
@@ -15,7 +16,7 @@ if (!fs.existsSync(testFilesDir)) {
 }
 
 describe('File class tests', () => {
-  
+
   test('constructor should throw error for invalid filePath', (t, done) => {
     assert.throws(() => new File(''), Error, 'filePath must be a non-empty string.');
     assert.throws(() => new File(null), Error);
@@ -127,6 +128,8 @@ describe('File class tests', () => {
   });
 
   test('should use default retry strategy to handle read error for non-existent file', (t, done) => {
+    console.log('Please, be patient, some tests will take ~10 seconds to complete.');
+
     const nonExistentFile = path.join(testFilesDir, 'non-existent-file.txt');
     const file = new File(nonExistentFile);
     
@@ -189,71 +192,6 @@ describe('File class tests', () => {
         done();
       })
       .read();
-  });
-
-  test('should handle FIFO read/write', (t, done) => {
-    const fifoPath = path.join(testFilesDir, 'test-fifo');
-    
-    if (fs.existsSync(fifoPath)) {
-      fs.unlinkSync(fifoPath);
-    }
-    
-    if (typeof fs.mkfifoSync !== 'function') {
-      done();
-      return;
-    }
-    
-    try {
-      // create FIFO
-      fs.mkfifoSync(fifoPath);
-      
-      const file = new File(fifoPath);
-      const testData = 'FIFO test data';
-      
-      let readData = '';
-      let dataReceived = false;
-      const readTimeout = setTimeout(() => {
-        done(new Error('FIFO read timeout'));
-      }, 5000);
-      
-      file.prepareRead()
-        .onData(chunk => {
-          readData += chunk.toString();
-          if (!dataReceived && readData.includes(testData)) {
-            dataReceived = true;
-            clearTimeout(readTimeout);
-            
-            setTimeout(() => {
-              assert.ok(readData.includes(testData));
-              fs.unlinkSync(fifoPath);
-              done();
-            }, 100);
-          }
-        })
-        .onError(err => {
-          clearTimeout(readTimeout);
-          if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-          done(err);
-        })
-        .read();
-      
-
-      setTimeout(() => {
-        file.prepareWrite(testData)
-          .onFinish(() => {
-            // ...
-          })
-          .onError(err => {
-            clearTimeout(readTimeout);
-            if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-            done(err);
-          })
-          .write();
-      }, 100);
-      
-    } catch (err) {
-      done();
-    }
   });
 
   test('should handle multiple sequential operations on same file', (t, done) => {
@@ -531,75 +469,6 @@ describe('File class tests', () => {
     performOperation(0);
   });
 
-  test('should handle FIFO continuous reading', (t, done) => {
-    const fifoPath = path.join(testFilesDir, 'continuous-fifo');
-    
-    if (fs.existsSync(fifoPath)) {
-      fs.unlinkSync(fifoPath);
-    }
-    
-    if (typeof fs.mkfifoSync !== 'function') {
-      done();
-      return;
-    }
-    
-    try {
-      fs.mkfifoSync(fifoPath);
-      
-      const file = new File(fifoPath);
-      let readDataChunks = [];
-      let writeCount = 0;
-      
-      file.prepareRead()
-        .onData(chunk => {
-          readDataChunks.push(chunk.toString());
-        })
-        .onError(err => {
-          if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-          done(err);
-        })
-        .read();
-      
-      const writeData = (data, delay) => {
-        setTimeout(() => {
-          file.prepareWrite(data)
-            .onFinish(() => {
-              writeCount++;
-              
-              if (writeCount === 3) {
-                setTimeout(() => {
-                  assert.equal(readDataChunks.length, 3);
-                  assert.equal(readDataChunks[0], 'First write\n');
-                  assert.equal(readDataChunks[1], 'Second write\n');
-                  assert.equal(readDataChunks[2], 'Third write\n');
-                  
-                  if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-                  done();
-                }, 200);
-              }
-            })
-            .onError(err => {
-              if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-              done(err);
-            })
-            .write();
-        }, delay);
-      };
-      
-      writeData('First write\n', 100);
-      writeData('Second write\n', 500);
-      writeData('Third write\n', 1000);
-      
-    } catch (err) {
-      if (err.code === 'ENOTSUP' || err.code === 'EPERM') {
-        // FIFOs not supported, skip.
-        done();
-      } else {
-        done(err);
-      }
-    }
-  });
-
   test('should reset read attempt counter after successful data reception', (t, done) => {
     const testFile = path.join(testFilesDir, 'attempt-reset-test.txt');
     const testContent = 'Test content';
@@ -608,6 +477,15 @@ describe('File class tests', () => {
     if (fs.existsSync(testFile)) {
       fs.unlinkSync(testFile);
     }
+
+    // Safety timeout
+    let timeout = setTimeout(() => {
+      if (!testCompleted) {
+        testCompleted = true;
+        if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+        done(new Error('Test timeout'));
+      }
+    }, 1000);
     
     let attemptNumbers = [];
     let retryCallCount = 0;
@@ -623,11 +501,11 @@ describe('File class tests', () => {
       
       // Let it retry twice, then create file for success
       if (retryCallCount == 1) {
-        console.log('first retry, attempt = ', attempt);
+        //console.log('first retry, attempt = ', attempt);
         assert.equal(attempt, 1, 'First retry should start with attempt 1');
         return 100; // Continue retrying
       } else if (retryCallCount == 2) {
-        console.log('second retry, attempt = ', attempt);
+        //console.log('second retry, attempt = ', attempt);
         assert.equal(attempt, 2, 'Second retry should be attempt 2');
         // Create the file so next retry succeeds
         fs.writeFileSync(testFile, testContent);
@@ -648,7 +526,7 @@ describe('File class tests', () => {
         if (!dataReceived && chunk.toString() === testContent) {
           dataReceived = true;
           testCompleted = true;
-          console.log('data received (attempt should reset to 1), attempt = ', attempt);
+          //console.log('data received (attempt should reset to 1), attempt = ', attempt);
           
           // Check that attempt counter was reset to 1 after successful data reception
           assert.equal(attempt, 1, 'Attempt counter should be reset to 1 after successful data reception');
@@ -659,6 +537,7 @@ describe('File class tests', () => {
           assert.ok(dataReceived, 'Should have received data successfully');
           
           if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
+          clearTimeout(timeout);
           done();
         }
       })
@@ -674,169 +553,147 @@ describe('File class tests', () => {
       })
       .read();
     
-    // Safety timeout
-    setTimeout(() => {
-      if (!testCompleted) {
-        testCompleted = true;
-        if (fs.existsSync(testFile)) fs.unlinkSync(testFile);
-        done(new Error('Test timeout'));
-      }
-    }, 30000);
+    
   });
 
-
-  test('should handle FIFO continuous reading.', (t, done) => {
-    const fifoPath = path.join(testFilesDir, 'continuous-disconnect-fifo');
+  test('should handle FIFO read/write and onData finish', (t, done) => {
+    const fifoPath = path.join(testFilesDir, 'test-fifo');
     
-    if (fs.existsSync(fifoPath)) {
-      fs.unlinkSync(fifoPath);
-    }
-    
-    if (typeof fs.mkfifoSync !== 'function') {
-      done();
-      return;
+    // create FIFO if it does not exist
+    if (!fs.existsSync(fifoPath)) {
+      try {
+        execSync('mkfifo ' + fifoPath);
+      } catch (err) {
+        console.error('Error creating FIFO:', err);
+      }
     }
     
     try {
-      fs.mkfifoSync(fifoPath);
       
       const file = new File(fifoPath);
-      let readDataChunks = [];
-      let writeCount = 0;
+      const testData = 'FIFO test data';
       
-      file.prepareRead()
-        .onData((chunk, finish) => {
-          readDataChunks.push(chunk.toString());
-          console.log('FIFO received:', chunk.toString().trim());
-        })
-        .onError(err => {
-          if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-          done(err);
-        })
-        .read();
-      
-
-      const writeData = (data, delay) => {
-        setTimeout(() => {
-          const writeFile = new File(fifoPath);
-          writeFile.prepareWrite(data)
-            .onFinish(() => {
-              writeCount++;
-              console.log(`Write ${writeCount} completed: ${data.trim()}`);
-              
-              if (writeCount === 4) {
-
-                setTimeout(() => {
-                  assert.equal(readDataChunks.length, 4);
-                  assert.equal(readDataChunks[0], 'First write\n');
-                  assert.equal(readDataChunks[3], 'Second write\n');
-                  assert.equal(readDataChunks[4], 'Third write\n');
-                  assert.equal(readDataChunks[5], 'Fourth write\n');
-                  assert.equal(readDataChunks[6], 'Fifth write\n');
-                  if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-                  done();
-                }, 300);
-              }
-            })
-            .onError(err => {
-              if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
-              done(err);
-            })
-            .write();
-        }, delay);
-      };
-      
-      // Write with different delays to test writer disconnection/reconnection
-      writeData('First write\n', 1);
-      writeData('write\n', 1);
-      writeData('write\n', 1);
-      writeData('Second write\n', 10);
-      writeData('Third write\n', 100);
-      writeData('Fourth write\n', 1000);
-      writeData('Fifth write\n', 3000);
-      
-    } catch (err) {
-      if (err.code === 'ENOTSUP' || err.code === 'EPERM') {
-        // FIFOs not supported, skip.
-        done();
-      } else {
-        done(err);
-      }
-    }
-  });
-
-
-
-  test('should call onFinish when finish is invoked in onData.', (t, done) => {
-
-    const fifoPath = path.join(testFilesDir, 'finish-fifo');
-    
-    if (fs.existsSync(fifoPath)) {
-      fs.unlinkSync(fifoPath);
-    }
-    
-    if (typeof fs.mkfifoSync !== 'function') {
-      done();
-      return;
-    }
-    
-    try {
-      fs.mkfifoSync(fifoPath);
-      
-      const file = new File(fifoPath);
-      let writeCount = 0;
+      let readData = '';
       let dataReceived = false;
-      let finishCalled = false;
+      const readTimeout = setTimeout(() => {
+        done(new Error('FIFO read timeout'));
+      }, 5000);
       
       file.prepareRead()
         .onData((chunk, finish) => {
-          dataReceived = true;
-          finish();
+          readData += chunk.toString();
+          if (!dataReceived && readData.includes(testData)) {
+            dataReceived = true;
+            clearTimeout(readTimeout);
+            
+            setTimeout(() => {
+              assert.ok(readData.includes(testData));
+              finish();
+            }, 100);
+          }
         })
         .onFinish(() => {
-          finishCalled = true;
-          assert.ok(dataReceived, 'Should have received data before finish');
-          assert.ok(finishCalled, 'onFinish should be called');
-          if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
+          fs.unlinkSync(fifoPath);
           done();
         })
         .onError(err => {
+          clearTimeout(readTimeout);
           if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
           done(err);
         })
         .read();
       
 
+      setTimeout(() => {
+        file.prepareWrite(testData)
+          .onFinish(() => {
+            // ...
+          })
+          .onError(err => {
+            clearTimeout(readTimeout);
+            if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
+            done(err);
+          })
+          .write();
+      }, 100);
+      
+    } catch (err) {
+      done(err);
+    }
+  });
+
+  test('should handle FIFO continuous reading and external finish', (t, done) => {
+    const fifoPath = path.join(testFilesDir, 'continuous-fifo');
+    
+    // create FIFO if it does not exist
+    if (!fs.existsSync(fifoPath)) {
+      try {
+        execSync('mkfifo ' + fifoPath);
+      } catch (err) {
+        console.error('Error creating FIFO:', err);
+      }
+    }
+
+    
+    try {
+
+      const file = new File(fifoPath);
+      let readDataChunks = [];
+      let writeCount = 0;
+      let finishTimeout = setTimeout(() => {
+        console.error('finish not called, timeout');
+        done(new Error('Timeout, finish not called'));
+      }, 2000);
+      
+      const readOperation = file.prepareRead()
+        .onData(chunk => {
+          readDataChunks.push(chunk.toString());
+        })
+        .onFinish(() => {
+          if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
+          clearTimeout(finishTimeout);
+          assert.equal(readDataChunks.length, 3);
+          assert.equal(readDataChunks[0], 'First write\n');
+          assert.equal(readDataChunks[1], 'Second write\n');
+          assert.equal(readDataChunks[2], 'Third write\n');
+          done();
+        })
+        .onError(err => {
+          done(err);
+        })
+        .read();
+      
       const writeData = (data, delay) => {
         setTimeout(() => {
-          const writeFile = new File(fifoPath);
-          writeFile.prepareWrite(data)
+          file.prepareWrite(data)
+            .onFinish(() => {
+              writeCount++;
+              
+              if (writeCount === 3) {
+                setTimeout(() => {
+                  readOperation.finish();
+                }, 200);
+              }
+            })
             .onError(err => {
-              if (fs.existsSync(fifoPath)) fs.unlinkSync(fifoPath);
               done(err);
             })
             .write();
         }, delay);
       };
       
-      writeData('First write\n', 1);
-      writeData('write\n', 1);
-      writeData('write\n', 1);
-      writeData('Second write\n', 10);
-      writeData('Third write\n', 100);
-      writeData('Fourth write\n', 1000);
-      writeData('Fifth write\n', 3000);
-      
+      writeData('First write\n', 100);
+      writeData('Second write\n', 500);
+      writeData('Third write\n', 1000);
+
     } catch (err) {
       if (err.code === 'ENOTSUP' || err.code === 'EPERM') {
-        console.log('FIFOs not supported, skipping test');
         // FIFOs not supported, skip.
         done();
       } else {
         done(err);
       }
     }
-
   });
 
 }); 

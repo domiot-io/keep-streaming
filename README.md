@@ -132,6 +132,7 @@ fifo.prepareRead()
   .read();
 ```
 
+
 ## Custom retry strategy example
 
 If no custom strategy functions are provided, default ones will be used.
@@ -204,6 +205,41 @@ slowDevice.prepareRead()
   .read();
 ```
 
+## External finish() method
+
+The external `finish()` method allows you to stop a read operation from outside the data callback. This is useful for implementing shutdown procedures or stopping readers based on external conditions:
+
+```
+import { File } from 'keep-streaming';
+
+const device = new File('/dev/sensor');
+
+// Start reading
+const readOperation = device.prepareRead()
+  .onData((chunk) => {
+    console.log('Sensor data:', chunk.toString());
+    // Reading continues until externally stopped
+  })
+  .onFinish(() => {
+    console.log('Reading stopped externally');
+  })
+  .onError(err => console.error('Read error:', err));
+
+readOperation.read();
+
+// Stop reading after 10 seconds
+setTimeout(() => {
+  console.log('Stopping sensor reading...');
+  readOperation.finish(); // Stops reading and cleans up resources
+}, 10000);
+
+// Or stop based on some other condition
+process.on('SIGINT', () => {
+  console.log('Shutdown signal received, stopping all readers...');
+  readOperation.finish();
+  process.exit(0);
+});
+```
 
 ## API Reference
 
@@ -230,8 +266,9 @@ Creates a read operation that implements continuous reading.
 #### ReadOperation Methods
 
 - **`.onData(callback)`** - `(chunk: Buffer, finish: Function, attempt: number) => void` - **Required** callback for data chunks. The `finish` function can be called to stop reading and trigger the `onFinish` callback.
-- **`.onFinish(callback)`** - `() => void` - Optional callback when reading is finished (called when `finish()` is invoked in `onData`).
+- **`.onFinish(callback)`** - `() => void` - Optional callback when reading is finished (called when `finish()` is invoked in `onData` or when the external `finish()` method is called).
 - **`.onError(callback)`** - `(error: Error) => void` - Error handling.
+- **`.finish()`** - `ReadOperation` - Stops the read operation externally and cleans up all resources. Can be called from outside the data callback to forcefully stop reading. Returns the ReadOperation for chaining.
 - **`.read()`** - Executes the read operation, keeps reading continuously.
 
 ### `file.prepareWrite(data)`

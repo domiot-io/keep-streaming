@@ -23,6 +23,10 @@ class ReadOperation {
     this._dataCallback = null;
     this._finishCallback = null;
     this._errorCallback = null;
+    this._activeStream = null;
+    this._activeTimeouts = new Set();
+    this._stopReading = false;
+    this._isFinished = false;
   }
 
   /**
@@ -63,6 +67,33 @@ class ReadOperation {
    */
   read() {
     this._execute();
+    return this;
+  }
+
+  /**
+   * Stops the read operation
+   * and cleans up all resources.
+   * @returns {ReadOperation} ReadOperation for chaining
+   */
+  finish() {
+
+    if (!this._stopReading && !this._isFinished) {
+      this._stopReading = true;
+      this._isFinished = true;
+      
+      if (this._activeStream) {
+        this._activeStream.destroy();
+
+        if (this._isFIFO()) {
+          fs.writeFileSync(this._filePath, '');
+        }
+      }
+
+      this._activeStream = null;
+      if (this._finishCallback) {
+        this._finishCallback();
+      }
+    }
   }
 
   /**
@@ -70,7 +101,26 @@ class ReadOperation {
    * @private
    */
   _execute() {
+    if (this._stopReading) return;
     this._waitForFileAndRead(1);
+  }
+
+  /**
+   * Helper to manage timeouts with tracking
+   * @private
+   */
+  _setTimeout(callback, delay) {
+    if (this._stopReading) return;
+    
+    const timeoutId = setTimeout(() => {
+      this._activeTimeouts.delete(timeoutId);
+      if (!this._stopReading) {
+        callback();
+      }
+    }, delay);
+    
+    this._activeTimeouts.add(timeoutId);
+    return timeoutId;
   }
 
   /**
@@ -81,14 +131,18 @@ class ReadOperation {
    * @private
    */
   _waitForFileAndRead(attempt) {
+    if (this._stopReading) return;
+    
     fs.access(this._filePath, fs.constants.F_OK, (err) => {
+      if (this._stopReading) return;
+      
       if (err) {
         try {
           const delay = this._options.readFileExistsRetryStrategy(err, attempt, this._filePath);
           if (typeof delay === 'number') {
-            setTimeout(() => this._waitForFileAndRead(attempt + 1), delay);
+            this._setTimeout(() => this._waitForFileAndRead(attempt + 1), delay);
           } else {
-            setTimeout(() => this._waitForFileAndRead(attempt + 1), 1);
+            this._setTimeout(() => this._waitForFileAndRead(attempt + 1), 1);
           }
         } catch (error) {
           this._handleError(error);
@@ -105,24 +159,20 @@ class ReadOperation {
    * @private
    */
   _performRead(attempt) {
+    if (this._stopReading) return;
     
     try {
       const readStream = this._createReadStream();
+      this._activeStream = readStream;
       let hasReceivedData = false;
-      let stopReading = false;
       const isFIFO = this._isFIFO();
       
-      const finish = () => {
-        if (!stopReading) {
-          stopReading = true;
-          readStream.destroy();
-          if (this._finishCallback) {
-            this._finishCallback();
-          }
-        }
+      const internalFinish = () => {
+        this.finish();
       };
       
       readStream.on('data', (chunk) => {
+        if (this._stopReading) return;
 
         // reset attempt counter
         // on first successful data reception
@@ -131,36 +181,43 @@ class ReadOperation {
           attempt = 1;
         }
         
-        if (this._dataCallback && !stopReading) {
-          this._dataCallback(chunk, finish, attempt);
+        if (this._dataCallback && !this._stopReading) {
+          this._dataCallback(chunk, internalFinish, attempt);
         }
       });
 
-      // For FIFOs, handle 'end' event to restart reading (continuous streaming)
+      // For FIFOs, handle 'end' even
+      // to restart reading (continuous streaming)
       if (isFIFO) {
         readStream.on('end', () => {
-          if (!stopReading) {
+          if (!this._stopReading) {
+            this._activeStream = null;
             // fifo writer disconnected,
             // restart reading to wait for next writer.
-            setTimeout(() => this._performRead(attempt), 50);
+            this._setTimeout(() => this._performRead(attempt), 50);
           }
         });
       } else {
         // For non-FIFOs, keep reading until EOF.
         readStream.on('end', () => {
-          if (this._finishCallback) {
-            this._finishCallback();
+          if (!this._stopReading) {
+            this._activeStream = null;
+            if (this._finishCallback) {
+              this._finishCallback();
+            }
           }
         });
       }
 
       readStream.on('error', (error) => {
-        if (stopReading) return;
+        if (this._stopReading) return;
+        
+        this._activeStream = null;
         
         try {
           const delay = this._options.readFileRetryStrategy(error, attempt, this._filePath);
           if (typeof delay === 'number') {
-            setTimeout(() => this._performRead(attempt + 1), delay);
+            this._setTimeout(() => this._performRead(attempt + 1), delay);
           } else {
             this._performRead(attempt + 1);
           }
@@ -168,6 +225,13 @@ class ReadOperation {
           this._handleError(err);
         }
       });
+
+      readStream.on('close', () => {
+        if (this._activeStream === readStream) {
+          this._activeStream = null;
+        }
+      });
+      
     } catch (error) {
       this._handleError(error);
     }

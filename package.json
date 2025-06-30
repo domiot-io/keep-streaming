@@ -1,6 +1,6 @@
 {
   "name": "keep-streaming",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Continuous reading and writing across all file types (device files, FIFOs, ...), with customizable retry mechanisms. Keep streaming!",
   "main": "index.js",
   "type": "module",
